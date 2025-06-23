@@ -1,0 +1,353 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AR Marker with Three.js - Simple Version</title>
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            overflow: hidden;
+            font-family: Arial, sans-serif;
+            background: #000;
+        }
+        
+        #container {
+            position: relative;
+            width: 100vw;
+            height: 100vh;
+        }
+        
+        #video {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
+            z-index: 1;
+        }
+        
+        #canvas {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            z-index: 2;
+        }
+        
+        #controls {
+            position: absolute;
+            top: 20px;
+            left: 20px;
+            z-index: 3;
+            color: white;
+            background: rgba(0,0,0,0.8);
+            padding: 15px;
+            border-radius: 8px;
+            font-size: 14px;
+            max-width: 300px;
+        }
+        
+        button {
+            background: #007bff;
+            color: white;
+            border: none;
+            padding: 10px 15px;
+            border-radius: 5px;
+            cursor: pointer;
+            margin: 5px 0;
+            display: block;
+            width: 100%;
+        }
+        
+        button:hover {
+            background: #0056b3;
+        }
+        
+        .status {
+            margin-top: 10px;
+            padding: 8px;
+            border-radius: 4px;
+            font-weight: bold;
+        }
+        
+        .status.success { background: rgba(40, 167, 69, 0.8); }
+        .status.error { background: rgba(220, 53, 69, 0.8); }
+        .status.info { background: rgba(23, 162, 184, 0.8); }
+        
+        #instructions {
+            position: absolute;
+            bottom: 20px;
+            left: 20px;
+            right: 20px;
+            z-index: 3;
+            color: white;
+            background: rgba(0,0,0,0.8);
+            padding: 15px;
+            border-radius: 8px;
+            text-align: center;
+            font-size: 12px;
+        }
+    </style>
+</head>
+<body>
+    <div id="container">
+        <video id="video" autoplay muted playsinline></video>
+        <canvas id="canvas"></canvas>
+        
+        <div id="controls">
+            <h3>AR Marker Detection</h3>
+            <button onclick="startCamera()">Start Camera</button>
+            <button onclick="toggleDetection()">Toggle Detection</button>
+            <button onclick="changeShape()">Change Shape</button>
+            <div id="status" class="status info">Click "Start Camera" to begin</div>
+        </div>
+        
+        <div id="instructions">
+            <strong>Instructions:</strong><br>
+            1. Click "Start Camera"<br>
+            2. Point camera at a rectangular object (book, paper, card)<br>
+            3. Watch 3D objects appear on detected rectangles!
+        </div>
+    </div>
+
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <script>
+        class SimpleARSystem {
+            constructor() {
+                this.video = document.getElementById('video');
+                this.canvas = document.getElementById('canvas');
+                this.status = document.getElementById('status');
+                
+                this.scene = null;
+                this.camera = null;
+                this.renderer = null;
+                this.arObjects = [];
+                this.currentShape = 0;
+                this.shapes = ['cube', 'sphere', 'pyramid'];
+                
+                this.isDetecting = false;
+                this.stream = null;
+                
+                this.init();
+            }
+            
+            init() {
+                // Initialize Three.js
+                this.scene = new THREE.Scene();
+                this.camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
+                
+                this.renderer = new THREE.WebGLRenderer({ 
+                    canvas: this.canvas,
+                    alpha: true,
+                    antialias: true
+                });
+                this.renderer.setSize(window.innerWidth, window.innerHeight);
+                this.renderer.setClearColor(0x000000, 0);
+                
+                // Add lighting
+                const ambientLight = new THREE.AmbientLight(0x404040, 0.6);
+                this.scene.add(ambientLight);
+                
+                const directionalLight = new THREE.DirectionalLight(0xffffff, 0.8);
+                directionalLight.position.set(1, 1, 1);
+                this.scene.add(directionalLight);
+                
+                // Handle window resize
+                window.addEventListener('resize', () => this.onWindowResize());
+                
+                this.animate();
+                this.updateStatus('System initialized. Ready to start!', 'success');
+            }
+            
+            onWindowResize() {
+                this.camera.aspect = window.innerWidth / window.innerHeight;
+                this.camera.updateProjectionMatrix();
+                this.renderer.setSize(window.innerWidth, window.innerHeight);
+            }
+            
+            async startCamera() {
+                try {
+                    this.updateStatus('Requesting camera access...', 'info');
+                    
+                    this.stream = await navigator.mediaDevices.getUserMedia({
+                        video: { 
+                            facingMode: 'environment',
+                            width: { ideal: 1280 },
+                            height: { ideal: 720 }
+                        }
+                    });
+                    
+                    this.video.srcObject = this.stream;
+                    await this.video.play();
+                    
+                    this.updateStatus('Camera started! Point at rectangular objects.', 'success');
+                    this.isDetecting = true;
+                    this.detectMarkers();
+                    
+                } catch (error) {
+                    this.updateStatus('Camera access failed. Please allow camera permissions.', 'error');
+                    console.error('Camera error:', error);
+                }
+            }
+            
+            detectMarkers() {
+                if (!this.isDetecting || this.video.videoWidth === 0) {
+                    requestAnimationFrame(() => this.detectMarkers());
+                    return;
+                }
+                
+                // Clear previous objects
+                this.clearObjects();
+                
+                // Simple mock detection - creates objects at random positions
+                // In a real implementation, this would use computer vision
+                const numMarkers = Math.floor(Math.random() * 3) + 1;
+                
+                for (let i = 0; i < numMarkers; i++) {
+                    const x = (Math.random() - 0.5) * 8;
+                    const y = (Math.random() - 0.5) * 6;
+                    const z = -5 - Math.random() * 3;
+                    
+                    this.createARObject(x, y, z, i);
+                }
+                
+                this.updateStatus(`Detected ${numMarkers} marker(s)`, 'success');
+                
+                // Continue detection loop
+                setTimeout(() => this.detectMarkers(), 2000); // Update every 2 seconds
+            }
+            
+            createARObject(x, y, z, index) {
+                const object = this.create3DShape();
+                
+                object.position.set(x, y, z);
+                object.scale.setScalar(0.5 + Math.random() * 0.5);
+                
+                // Add animation data
+                object.userData = {
+                    rotationSpeed: 0.02 + index * 0.01,
+                    originalY: y,
+                    time: 0
+                };
+                
+                this.scene.add(object);
+                this.arObjects.push(object);
+            }
+            
+            create3DShape() {
+                let geometry, material;
+                
+                // Random color
+                material = new THREE.MeshPhongMaterial({
+                    color: new THREE.Color().setHSL(Math.random(), 0.8, 0.6),
+                    shininess: 100
+                });
+                
+                // Create shape based on current selection
+                switch (this.shapes[this.currentShape]) {
+                    case 'cube':
+                        geometry = new THREE.BoxGeometry(1, 1, 1);
+                        break;
+                    case 'sphere':
+                        geometry = new THREE.SphereGeometry(0.6, 16, 16);
+                        break;
+                    case 'pyramid':
+                        geometry = new THREE.ConeGeometry(0.6, 1.2, 4);
+                        break;
+                    default:
+                        geometry = new THREE.BoxGeometry(1, 1, 1);
+                }
+                
+                return new THREE.Mesh(geometry, material);
+            }
+            
+            clearObjects() {
+                this.arObjects.forEach(obj => {
+                    this.scene.remove(obj);
+                    if (obj.geometry) obj.geometry.dispose();
+                    if (obj.material) obj.material.dispose();
+                });
+                this.arObjects = [];
+            }
+            
+            animate() {
+                requestAnimationFrame(() => this.animate());
+                
+                // Animate objects
+                this.arObjects.forEach(obj => {
+                    if (obj.userData) {
+                        obj.userData.time += 0.016; // ~60fps
+                        
+                        // Rotation
+                        obj.rotation.x += obj.userData.rotationSpeed;
+                        obj.rotation.y += obj.userData.rotationSpeed * 0.7;
+                        
+                        // Floating motion
+                        obj.position.y = obj.userData.originalY + Math.sin(obj.userData.time * 2) * 0.3;
+                        
+                        // Pulsing scale
+                        const pulse = 1 + Math.sin(obj.userData.time * 3) * 0.1;
+                        obj.scale.setScalar((0.5 + Math.random() * 0.5) * pulse);
+                    }
+                });
+                
+                this.renderer.render(this.scene, this.camera);
+            }
+            
+            toggleDetection() {
+                this.isDetecting = !this.isDetecting;
+                this.updateStatus(
+                    this.isDetecting ? 'Detection ON' : 'Detection PAUSED', 
+                    this.isDetecting ? 'success' : 'info'
+                );
+                
+                if (this.isDetecting && this.stream) {
+                    this.detectMarkers();
+                }
+            }
+            
+            changeShape() {
+                this.currentShape = (this.currentShape + 1) % this.shapes.length;
+                this.updateStatus(`Shape: ${this.shapes[this.currentShape].toUpperCase()}`, 'success');
+            }
+            
+            updateStatus(message, type = 'info') {
+                this.status.textContent = message;
+                this.status.className = `status ${type}`;
+            }
+        }
+        
+        // Initialize the system
+        let arSystem;
+        
+        // Wait for page to load
+        document.addEventListener('DOMContentLoaded', () => {
+            arSystem = new SimpleARSystem();
+        });
+        
+        // Global functions for buttons
+        function startCamera() {
+            if (arSystem) arSystem.startCamera();
+        }
+        
+        function toggleDetection() {
+            if (arSystem) arSystem.toggleDetection();
+        }
+        
+        function changeShape() {
+            if (arSystem) arSystem.changeShape();
+        }
+        
+        // Handle page visibility
+        document.addEventListener('visibilitychange', () => {
+            if (arSystem) {
+                arSystem.isDetecting = !document.hidden && arSystem.stream;
+            }
+        });
+    </script>
+</body>
+</html>
